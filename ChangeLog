@@ -1,0 +1,25 @@
+commit 57a33de
+Author: Raphael Prudencio <rsprudencio@gmail.com>
+Date:   2011-04-17
+
+    Changed http transfer to libcurl
+    Splitted coolproxy.c into .c and .h
+
+.gitignore
+coolproxy.c
+coolproxy.h
+coolproxy.ini
+
+commit f7d78bc
+Author: Raphael Prudencio <rsprudencio@gmail.com>
+Date:   2011-04-14
+
+    v0.7.1 - Moving coolproxy project to git
+    
+    Current feature:
+    	Test proxies from hardcoded website or config file for anonymous
+    	proxies
+
+.gitignore
+coolproxy.c
+coolproxy.ini
