@@ -1,17 +1,10 @@
 /*************************************************************
  *
- * 	DCLABS 2010 - raph0x88
- *
- *	CoolProxy v0.6
+ * 	DCLABS 2011 - raph0x88
  *
  *
  *	Usage: ./coolproxy
  *
- *
- *
- *	Its an alpha-version of the tool so it has some bugs
- *
- *	Please report any bug/problem at dmind.org/dclabs
  *
  *************************************************************/
 
@@ -27,42 +20,8 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <regex.h>
-
-
-#define VERSION			"v0.6"
-#define TIMEOUT_RETRIES		3
-#define RESULTBUFSIZE		65536
-#define TEMPBUFSIZE		3000
-#define HTTPHEADERSIZE		2048
-#define IPPORT_REGEXP		"[0-9]{1,3}([.][0-9]{1,3}){3}:[0-9]{1,5}" 	// "([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])(.([0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])){3}:([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-6][0-5][0-5][0-3][0-5])"
-#define IP_REGEXP			"[0-9]{1,3}([.][0-9]{1,3}){3}"
-#define DEFAULTSITE		"www.proxy-list.net"
-#define DEFAULTPAGE    		"/anonymous-proxy-lists.shtml"
-#define GETIPSITE			"meuip.datahouse.com.br" 							// /whatismyipaddress.com
-
-
-
-/*
- *  PROTOTYPES
- */
-
-void freeReallocd(char **, int);
-void getOwnIp();
-char **testProxies(char **, int, int *);
-char **regexFilter(char *, int *, char *);
-char *getHttp(char *, char *, char *);
-
-
-
-/*
- *  GLOBAL VARIABLES
- */
-
-char *ownIp;
-char **sourceProxies;
-char **sourcePage;
-struct timeval sendTimeout;
-struct timeval recvTimeout;
+#include <curl/curl.h>
+#include "coolproxy.h"
 
 
 
@@ -80,146 +39,14 @@ usage(char **argv)
 
 
 
-/*
- * Function getHttp
- *
- * 		description: returns a buffer with the
- * 					 raw HTTP response from the server
- *
- *		usage: char *ptr = getHttp("www.google.com", "80", "/search?=aa");
- */
-
-char *
-getHttp(char *proxySite, char *proxySitePort, char *proxyPage)
-{
-	struct addrinfo hints, *res, *p;
-	int status, retry = 0;
-	int sockfd;
-	int yes=1, numbytes;
-	char buffer[RESULTBUFSIZE] = "\0";
-	char tempbuf[TEMPBUFSIZE];
-
-
-
-	/*
-	 *  GETTING INFO FOR SOCKET
-	 */
-
-	memset(&hints, 0, sizeof hints);
-	hints.ai_family = AF_INET;
-	hints.ai_socktype = SOCK_STREAM;
-
-	if ((status = getaddrinfo(proxySite, proxySitePort, &hints, &res)) != 0)
-		return NULL;
-
-
-
-	/*
-	 *  TRYING TO GET A SOCKET FROM THE INFO
-	 */
-
-
-
-	for(p = res; p != NULL; p = p->ai_next)
-	{
-		if ((sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1)
-			continue;
-
-		if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1)
-			continue;
-
-		if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&recvTimeout,  sizeof recvTimeout))
-			continue;
-
-		if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&sendTimeout,  sizeof sendTimeout))
-			continue;
-
-		if(connect(sockfd, p->ai_addr, p->ai_addrlen) == -1)
-			continue;
-
-		break;
-    }
-
-	if(p == NULL)
-		return NULL;
-
-
-
-    /*
-     *  SETTING HTTP HEADER
-     */
-
-    char * headerHttp = (char *) malloc(HTTPHEADERSIZE * sizeof(char));
-    
-    if (headerHttp == NULL) 
-        return NULL;
-    
-    strcpy(headerHttp, "GET ");
-    strcat(headerHttp, proxyPage);
-    strcat(headerHttp, " HTTP/1.1\n");
-    strcat(headerHttp, "Host: ");
-    strcat(headerHttp, proxySite);
-    strcat(headerHttp, "\n");
-    strcat(headerHttp, "User-Agent: Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.4) Gecko/2008102920 Firefox/3.0.4\n");
-    strcat(headerHttp, "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\n");
-    strcat(headerHttp, "Accept-Language: en-us,en;q=0.5\n");
-    strcat(headerHttp, "Accept-Encoding: gzip,deflate\n");
-    strcat(headerHttp, "Accept-Charset: ISO-8859-1,utf-8;q=0.7,*;q=0.7\n");
-    strcat(headerHttp, "Keep-Alive: 300\n");
-    strcat(headerHttp, "Connection: keep-alive\n");
-    strcat(headerHttp, "\x0d\x0a\x0d\x0a");
-    headerHttp[strlen(headerHttp)] = 0;
-
-
-    /*
-     *  SENDING HTTP REQUEST
-     */
-
-	if (send(sockfd, headerHttp, HTTPHEADERSIZE, 0) == -1)
-                return NULL;
-
-
-
-    /*
-     *  RECEIVING PACKETS AND PARSING
-     */
-
-	for(;;)
-	{
-		if((numbytes = recv(sockfd, tempbuf, TEMPBUFSIZE-1, 0)) == -1 || retry > TIMEOUT_RETRIES)
-		{
-			if(numbytes == -1)
-				break;
-			else
-			{
-				retry++;
-				continue;
-			}
-		}
-
-		if(numbytes == 0)
-			break;
-
-		strcat(buffer, tempbuf);
-	}
-
-
-    if (headerHttp != NULL)
-        free(headerHttp);
-
-	freeaddrinfo(res);
-	return strdup(buffer);
-}
-
-
-
 char **
-regexFilter(char *string, int *sizeList, char *RegExp)
+regexFilter(char *string, size_t *sizeList, char *RegExp)
 {
-	int s = *sizeList;
+	size_t s = 0;
 	char **list = NULL;
     regex_t re;
     regmatch_t result;
+    int diff;
 
 
 
@@ -233,11 +60,11 @@ regexFilter(char *string, int *sizeList, char *RegExp)
 	while(regexec(&re, string, 1, &result, 0) == 0)
 	{
 		string += result.rm_so;
-
+		diff = result.rm_eo - result.rm_so;
 		s++;
-		list = realloc(list, s * sizeof(int));
-		list[s-1] = strndup(string, result.rm_eo - result.rm_so);
-
+		list = realloc(list, s * sizeof(char *));
+		list[s-1] = strndup(string, diff);
+		list[s-1][diff] = '\0';
 		string += result.rm_eo - result.rm_so;
 	}
 
@@ -251,13 +78,24 @@ regexFilter(char *string, int *sizeList, char *RegExp)
 
 
 char **
-testProxies(char **list, int sizeList, int *sizeCoolProxies)
+testProxies(char **list, size_t sizeList, size_t *sizeCoolProxies, char *ownIp)
 {
-	char *http = NULL;
+	char http[HTTPRESULT] = { 0 };
+	char tempChar[25];
 	char **proxy, **coolProxies = NULL;
 	char *ip, *port;
 	int i;
-	int sizeProxies = 0;
+	size_t sizeProxies = 0;
+	CURL *curl;
+	CURLcode code;
+
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
+    curl_easy_setopt(curl, CURLOPT_URL, GETIPSITE);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 4);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 
 
 
@@ -265,14 +103,22 @@ testProxies(char **list, int sizeList, int *sizeCoolProxies)
 	{
 		ip = strtok_r(list[i], ":", &port);
 
-		if((http = getHttp(ip, port, "http://meuip.datahouse.com.br/")) != NULL)
+		curl_easy_setopt(curl, CURLOPT_PROXY, ip);
+		curl_easy_setopt(curl, CURLOPT_PROXYPORT, atoi(port));
+
+		printf("testing %s:%s\n", ip, port);
+
+		if((code = curl_easy_perform(curl)) == 0)
 		{
 			proxy = regexFilter(http, &sizeProxies, IP_REGEXP);
+
+			printf("Number of proxies found: %d\n", sizeProxies);
+
 			if(proxy != NULL)
 			{
+				printf("\tShown %s\t comparing with %s - IF DIFF SHOULD APPEAR BELOW!\n", proxy[0], ownIp);
 				if(strcmp(proxy[0], ownIp))
 				{
-					char tempChar[25];
 					strcpy(tempChar, ip);
 					strcat(tempChar, ":");
 					strcat(tempChar, port);
@@ -282,12 +128,16 @@ testProxies(char **list, int sizeList, int *sizeCoolProxies)
 					coolProxies[*sizeCoolProxies-1] = strdup(tempChar);
 				}
 			}
-		}
 
-		sizeProxies = 0;
+			memset(http, 0x00, strlen(http));
+		}
+		else
+			printf("Code we got: %d\n", code);
+
+		freeReallocd(proxy, sizeProxies);
 	}
 
-
+	curl_easy_cleanup(curl);
 
 	return coolProxies;
 }
@@ -295,53 +145,56 @@ testProxies(char **list, int sizeList, int *sizeCoolProxies)
 
 
 void
-getOwnIp()
+getOwnIp(char ip[])
 {
-	char *http;
+	char http[HTTPRESULT] = { 0 };
 	char **result = NULL;
-	int resultSize = 0;
+	size_t resultSize = 0;
+	CURL *curl;
 
-
-
-	http = getHttp(GETIPSITE, "80", " / ");
+	curl = curl_easy_init();
+	curl_easy_setopt(curl, CURLOPT_URL, GETOWNIPSITE);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
+    curl_easy_perform(curl);
 
 	result = regexFilter(http, &resultSize, IP_REGEXP);
 
 	if(result != NULL)
-		ownIp = strdup(result[0]);
+		strncpy(ip, result[0], IPSIZE-1);
 	else
 	{
 		fprintf(stderr, "failed to get own external ip\n");
 		exit(1);
 	}
 
-
-
 	freeReallocd(result, resultSize);
-	if(http != NULL)
-		free(http);
 }
 
 
 
 void
-freeReallocd(char **buffer, int sizeBuffer)
+freeReallocd(char **buffer, size_t sizeBuffer)
 {
 	int i;
 
-	for(i = 0; i < sizeBuffer; i++)
-	{
-		if(buffer[i] != NULL)
-			free(buffer[i]);
-	}
+
 	if(buffer != NULL)
-		free(buffer);
+	{
+		for(i = 0; i < sizeBuffer; i++)
+		{
+			if(buffer[i] != NULL)
+				free(buffer[i]);
+		}
+
+		//free(buffer);
+	}
 }
 
 
 
 void
-readIni(int *sizeSources){
+readIni(size_t *sizeSources, char **sourceProxies){
 	FILE *fp;
 	char temp[1024];
 	char *token, *tmp1, *token2;
@@ -356,22 +209,17 @@ readIni(int *sizeSources){
 
 
 	/*
-	 *  INITIALIZING TIMEOUTS
-	 */
-
-	sendTimeout.tv_sec = 10;
-	sendTimeout.tv_usec = 0;
-	recvTimeout.tv_sec = 5;
-	recvTimeout.tv_usec = 0;
-
-
-
-	/*
 	 * SCANNING THE INI FILE
 	 */
 
-	while(fscanf(fp, "%s", temp) > 0)
+	//while(fscanf(fp, "%s", temp) > 0)
+	while(fgets(temp, 1023, fp) != NULL)
 	{
+		temp[strlen(temp)-1] = '\0';
+
+		if(strchr(temp, '#') != NULL)
+			continue;
+
 		for (i = 1, tmp1 = temp; ; i++, tmp1 = NULL)
 		{
 			token = strtok_r(tmp1, "=", &token2);
@@ -380,32 +228,13 @@ readIni(int *sizeSources){
 
 			if(!strcmp(token, "SOURCE"))
 			{
-				char *tempToken;
-				if( strncmp(token2, "http://", 7) == 0 )	/* REMOVES THE "http://" FROM THE LINK */
-					token2 += 7;
-
-				token = strtok_r(token2, "/", &token2);
-				tempToken = malloc(strlen(token2) + 2);
-				strcpy(tempToken, "/");
-				strcat(tempToken, token2);
-
 				s++;
 				sourceProxies = realloc(sourceProxies, sizeof(int) * s);
-				sourceProxies[s-1] = strdup(token);
-
-				sourcePage = realloc(sourcePage, sizeof(int) * s);
-				sourcePage[s-1] = strdup(tempToken);
-
-				if(tempToken != NULL)
-					free(tempToken);
+				sourceProxies[s-1] = strdup(token2);
 			}
-
-			else if(!strcmp(token, "SEND_TIMEOUT"))
-				sendTimeout.tv_sec = atoi(token2);
-			else if(!strcmp(token, "RECV_TIMEOUT"))
-				recvTimeout.tv_sec = atoi(token2);
 		}
 	}
+
 
 	fclose(fp);
 
@@ -414,15 +243,24 @@ readIni(int *sizeSources){
 
 
 
+size_t
+readCurl(void *curlData, size_t nmemb, size_t size, void *http)
+{
+	strncat(http, curlData, HTTPRESULT - strlen(http));
+
+	return size * nmemb;
+}
+
+
 int
 main(int argc, char **argv)
 {
-
-    char *http = NULL;
+    char http[HTTPRESULT] = { 0 };
+    char **list = NULL, **coolProxies = NULL, **sourceProxies = NULL;
+    char ownIp[IPSIZE];
+    size_t sizeSources = 0,sizeCoolProxies = 0, sizeList = 0;
     int i = 0;
-    char **list = NULL; int sizeList = 0;
-    char **coolProxies = NULL; int sizeCoolProxies = 0;
-    int sizeSources = 0;
+    CURL *curl;
 
 
 
@@ -432,21 +270,20 @@ main(int argc, char **argv)
 	fprintf(stdout, "\nDcLabs 2010 - CoolProxy %s", VERSION);
 	fprintf(stdout, "\n  Retrieving and testing proxies...\n");
 
+
+
 	/*
 	 *  READING CONFIGURATION FILE
 	 */
 
-	readIni(&sizeSources);
-
-	if(sourceProxies == NULL || sourcePage == NULL)
+	if(sourceProxies == NULL)
 	{
 		sourceProxies = malloc(sizeof(int));
 		sourceProxies[0] = strdup(DEFAULTSITE);
-		sourcePage = malloc(sizeof(int));
-		sourcePage[0] = strdup(DEFAULTPAGE);
-
 		sizeSources++;
 	}
+
+	readIni(&sizeSources, sourceProxies);
 
 
 
@@ -454,13 +291,17 @@ main(int argc, char **argv)
      *  GETTING OWN IP
      */
 
-    getOwnIp();
+    getOwnIp(ownIp);
 
 
 
     /*
      *  LOOP THAT GET AND TEST PROXIES
      */
+
+    curl = curl_easy_init();
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
 
     for(i = 0; i < sizeSources; i++)
     {
@@ -470,7 +311,9 @@ main(int argc, char **argv)
 		 *  GETTING PROXIES
 		 */
 
-		http = getHttp(sourceProxies[i], "80", sourcePage[i]);
+
+    	curl_easy_setopt(curl, CURLOPT_URL, sourceProxies[i]);
+        curl_easy_perform(curl);
 
 		if(http == NULL)
 			continue;
@@ -489,7 +332,7 @@ main(int argc, char **argv)
 		 *  TESTING PROXIES
 		 */
 
-		coolProxies = testProxies(list, sizeList, &sizeCoolProxies);
+		coolProxies = testProxies(list, sizeList, &sizeCoolProxies, ownIp);
 
 
 
@@ -510,8 +353,8 @@ main(int argc, char **argv)
      */
 
     freeReallocd(sourceProxies, sizeSources == 0 ? 1 : sizeSources);
-
-
+    
+    curl_easy_cleanup(curl);
 
     return 0;
 }

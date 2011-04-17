@@ -1,2 +1,10 @@
+# Eclipse files/dirs
+.project
+.cproject
+Debug/
+
+# Coolproxy files and vim bkp copies
 multithread/
 *~
+coolproxy
+
