@@ -21,6 +21,7 @@
 #include <arpa/inet.h>
 #include <regex.h>
 #include <curl/curl.h>
+#include <getopt.h>
 #include "coolproxy.h"
 
 
@@ -64,7 +65,6 @@ regexFilter(char *string, size_t *sizeList, char *RegExp)
 		s++;
 		list = realloc(list, s * sizeof(char *));
 		list[s-1] = strndup(string, diff);
-		list[s-1][diff] = '\0';
 		string += result.rm_eo - result.rm_so;
 	}
 
@@ -82,22 +82,22 @@ testProxies(char **list, size_t sizeList, size_t *sizeCoolProxies, char *ownIp)
 {
 	char http[HTTPRESULT] = { 0 };
 	char tempChar[25];
-	char **proxy, **coolProxies = NULL;
-	char *ip, *port;
+	char **proxy = NULL, **coolProxies = NULL;
+	char *ip = NULL, *port = NULL;
 	int i;
 	size_t sizeProxies = 0;
 	CURL *curl;
 	CURLcode code;
 
+
+
     curl = curl_easy_init();
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)http);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
-    curl_easy_setopt(curl, CURLOPT_URL, GETIPSITE);
+    curl_easy_setopt(curl, CURLOPT_URL, GETOWNIPSITE);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 4);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10);
-    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
-
-
+    //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1);
 
 	for(i = 0; i < sizeList; i++)
 	{
@@ -106,17 +106,13 @@ testProxies(char **list, size_t sizeList, size_t *sizeCoolProxies, char *ownIp)
 		curl_easy_setopt(curl, CURLOPT_PROXY, ip);
 		curl_easy_setopt(curl, CURLOPT_PROXYPORT, atoi(port));
 
-		printf("testing %s:%s\n", ip, port);
+		http[0] = '\0';
 
 		if((code = curl_easy_perform(curl)) == 0)
 		{
 			proxy = regexFilter(http, &sizeProxies, IP_REGEXP);
 
-			printf("Number of proxies found: %d\n", sizeProxies);
-
 			if(proxy != NULL)
-			{
-				printf("\tShown %s\t comparing with %s - IF DIFF SHOULD APPEAR BELOW!\n", proxy[0], ownIp);
 				if(strcmp(proxy[0], ownIp))
 				{
 					strcpy(tempChar, ip);
@@ -127,14 +123,10 @@ testProxies(char **list, size_t sizeList, size_t *sizeCoolProxies, char *ownIp)
 					coolProxies = realloc(coolProxies, *sizeCoolProxies * sizeof(int));
 					coolProxies[*sizeCoolProxies-1] = strdup(tempChar);
 				}
-			}
 
-			memset(http, 0x00, strlen(http));
+			if(proxy != NULL)
+				freeReallocd(proxy, sizeProxies);
 		}
-		else
-			printf("Code we got: %d\n", code);
-
-		freeReallocd(proxy, sizeProxies);
 	}
 
 	curl_easy_cleanup(curl);
@@ -154,7 +146,7 @@ getOwnIp(char ip[])
 
 	curl = curl_easy_init();
 	curl_easy_setopt(curl, CURLOPT_URL, GETOWNIPSITE);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)http);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
     curl_easy_perform(curl);
 
@@ -168,7 +160,8 @@ getOwnIp(char ip[])
 		exit(1);
 	}
 
-	freeReallocd(result, resultSize);
+	if(result != NULL)
+		freeReallocd(result, resultSize);
 }
 
 
@@ -178,17 +171,13 @@ freeReallocd(char **buffer, size_t sizeBuffer)
 {
 	int i;
 
-
-	if(buffer != NULL)
+	for(i = 0; i < sizeBuffer; i++)
 	{
-		for(i = 0; i < sizeBuffer; i++)
-		{
-			if(buffer[i] != NULL)
-				free(buffer[i]);
-		}
-
-		//free(buffer);
+		if(buffer[i] != NULL)
+			free(buffer[i]);
 	}
+
+	free(buffer);
 }
 
 
@@ -300,7 +289,7 @@ main(int argc, char **argv)
      */
 
     curl = curl_easy_init();
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, http);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)http);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, readCurl);
 
     for(i = 0; i < sizeSources; i++)
@@ -340,8 +329,10 @@ main(int argc, char **argv)
 		 *  RESET TO NEXT ROUND
 		 */
 
-	    freeReallocd(list, sizeList);
-	    freeReallocd(coolProxies, sizeCoolProxies);
+		if(list != NULL)
+			freeReallocd(list, sizeList);
+		if(coolProxies != NULL)
+			freeReallocd(coolProxies, sizeCoolProxies);
 		sizeCoolProxies = 0;
 		sizeList = 0;
     }
@@ -352,7 +343,7 @@ main(int argc, char **argv)
      *  FREEING MEMORY ALLOC'ED BY regexFilter()
      */
 
-    freeReallocd(sourceProxies, sizeSources == 0 ? 1 : sizeSources);
+    freeReallocd(sourceProxies, sizeSources);
     
     curl_easy_cleanup(curl);
 
